@@ -62,79 +62,114 @@ module Api; end
 require_relative '../../chart_controller.rb'
 
 RSpec.describe Api::ChartController do
-    let(:controller) { Api::ChartController.new }
-    let(:valid_apikey) { 'valid_api_key' }
-    let(:invalid_apikey) { 'invalid_api_key' }
-    let(:valid_lat) { '50.0' }
-    let(:valid_lng) { '10.0' }
-    let(:invalid_lat) { '100.0' }
-    let(:invalid_lng) { '200.0' }
+  let(:controller) { Api::ChartController.new }
+  let(:valid_apikey) { 'valid_api_key' }
+  let(:invalid_apikey) { 'invalid_api_key' }
+  let(:valid_lat) { '50.0' }
+  let(:valid_lng) { '10.0' }
+  let(:invalid_lat) { '100.0' }
+  let(:invalid_lng) { '200.0' }
+  let(:nonexistent_lat) { '70.0' }
+  let(:nonexistent_lng) { '20.0' }
+  let(:invalid_lat_type) { 'not_a_number' }
+  let(:invalid_lng_type) { 'not_a_number' }
 
-    describe '#get_solar' do
+  describe '#get_solar' do
+    before do
+      allow(controller).to receive(:render_error)
+      allow(controller).to receive(:render)
+    end
+
+    context 'with valid API key and subscription' do
+      let(:user) { User.new([Subscription.new(Time.now, double('SubscriptionType', period: 30))]) }
+
       before do
-        allow(controller).to receive(:render_error)
-        allow(controller).to receive(:render)
+        allow(User).to receive(:find_by).with(apikey: valid_apikey).and_return(user)
+        allow(controller).to receive(:calculate_valid_until).with(user).and_return(Time.now + (30 * 24 * 60 * 60))
       end
 
-      context 'with valid API key and subscription' do
-        let(:user) { User.new([Subscription.new(Time.now, double('SubscriptionType', period: 30))]) }
-
-        before do
-          allow(User).to receive(:find_by).with(apikey: valid_apikey).and_return(user)
-          allow(controller).to receive(:calculate_valid_until).with(user).and_return(Time.now + (30 * 24 * 60 * 60)) # 30 days in seconds
-        end
-
-        it 'renders solar data for valid coordinates' do
-          controller.params = { apikey: valid_apikey, lat: valid_lat, lng: valid_lng }
-          expect(controller).to receive(:process_location_request).with(valid_lat, valid_lng)
-          controller.get_solar
-        end
-
-        it 'renders subscription data for missing coordinates' do
-          controller.params = { apikey: valid_apikey }
-          expect(controller).to receive(:render_subscription_data).with(user)
-          controller.get_solar
-        end
+      it 'renders solar data for valid coordinates' do
+        controller.params = { apikey: valid_apikey, lat: valid_lat, lng: valid_lng }
+        expect(controller).to receive(:process_location_request).with(valid_lat, valid_lng)
+        controller.get_solar
       end
 
-      context 'with valid API key but no subscription' do
-        let(:user) { User.new([]) }
+      it 'renders subscription data for missing coordinates' do
+        controller.params = { apikey: valid_apikey }
+        expect(controller).to receive(:render_subscription_data).with(user)
+        controller.get_solar
+      end
+    end
 
-        before do
-          allow(User).to receive(:find_by).with(apikey: valid_apikey).and_return(user)
-          allow(controller).to receive(:calculate_valid_until).with(user).and_return(Time.now - (24 * 60 * 60)) # 1 day in seconds
-        end
+    context 'with valid API key but no subscription' do
+      let(:user) { User.new([]) }
 
-        it 'renders no valid subscription error' do
-          controller.params = { apikey: valid_apikey }
-          expect(controller).to receive(:render_no_valid_subscription)
-          controller.get_solar
-        end
+      before do
+        allow(User).to receive(:find_by).with(apikey: valid_apikey).and_return(user)
+        allow(controller).to receive(:calculate_valid_until).with(user).and_return(Time.now - (24 * 60 * 60))
       end
 
-      context 'with invalid API key' do
-        it 'renders authentication error' do
-          controller.params = { apikey: invalid_apikey }
-          allow(User).to receive(:find_by).with(apikey: invalid_apikey).and_return(nil)
+      it 'renders no valid subscription error' do
+        controller.params = { apikey: valid_apikey }
+        expect(controller).to receive(:render_no_valid_subscription)
+        controller.get_solar
+      end
+    end
 
-          expect(controller).to receive(:render_error).with("Unknown ApiKey. Please sign in at https://pro.solary.org/login to check your key.", 400)
-          controller.get_solar
-        end
+    context 'with invalid API key' do
+      it 'renders authentication error' do
+        controller.params = { apikey: invalid_apikey }
+        allow(User).to receive(:find_by).with(apikey: invalid_apikey).and_return(nil)
+        expect(controller).to receive(:render_error).with("Unknown ApiKey. Please sign in at https://pro.solary.org/login to check your key.", 400)
+        controller.get_solar
+      end
+    end
+
+    context 'with invalid coordinates' do
+      let(:user) { User.new([Subscription.new(Time.now, double('SubscriptionType', period: 30))]) }
+
+      before do
+        allow(User).to receive(:find_by).with(apikey: valid_apikey).and_return(user)
+        allow(controller).to receive(:calculate_valid_until).with(user).and_return(Time.now + (30 * 24 * 60 * 60))
       end
 
-      context 'with invalid coordinates' do
-        let(:user) { User.new([Subscription.new(Time.now, double('SubscriptionType', period: 30))]) }
+      it 'renders coordinates out of range error' do
+        controller.params = { apikey: valid_apikey, lat: invalid_lat, lng: invalid_lng }
+        expect(controller).to receive(:render_error).with("Parameters out of range", 400)
+        controller.get_solar
+      end
+    end
 
-        before do
-          allow(User).to receive(:find_by).with(apikey: valid_apikey).and_return(user)
-          allow(controller).to receive(:calculate_valid_until).with(user).and_return(Time.now + (30 * 24 * 60 * 60))
-        end
+    context 'with valid API key and subscription, but location not found' do
+      let(:user) { User.new([Subscription.new(Time.now, double('SubscriptionType', period: 30))]) }
 
-        it 'renders coordinates out of range error' do
-          controller.params = { apikey: valid_apikey, lat: invalid_lat, lng: invalid_lng }
-          expect(controller).to receive(:render_error).with("Parameters out of range", 400)
-          controller.get_solar
-        end
+      before do
+        allow(User).to receive(:find_by).with(apikey: valid_apikey).and_return(user)
+        allow(controller).to receive(:calculate_valid_until).with(user).and_return(Time.now + (30 * 24 * 60 * 60))
+        allow(Location).to receive(:find_by).with(lat: nonexistent_lat, lon: nonexistent_lng).and_return(nil)
+      end
+
+      it 'renders location not found error' do
+        controller.params = { apikey: valid_apikey, lat: '60.0', lng: '20.0' }
+        expect(Location).to receive(:find_by).with(lat: 60, lon: 20).and_return(nil)
+        expect(controller).to receive(:render_error).with("Location not found", 404)
+        controller.get_solar
+      end
+    end
+
+    context 'with invalid latitude and longitude types' do
+      let(:user) { User.new([Subscription.new(Time.now, double('SubscriptionType', period: 30))]) }
+
+      before do
+        allow(User).to receive(:find_by).with(apikey: valid_apikey).and_return(user)
+        allow(controller).to receive(:calculate_valid_until).with(user).and_return(Time.now + (30 * 24 * 60 * 60))
+      end
+
+      it 'renders type error for invalid coordinate types' do
+        controller.params = { apikey: valid_apikey, lat: '90.1', lng: '180.1' }
+        expect(controller).to receive(:render_error).with("Parameters out of range", 400)
+        controller.get_solar
       end
     end
   end
+end
